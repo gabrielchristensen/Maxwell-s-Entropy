@@ -1,0 +1,11 @@
+# Ambiente Virtual do Python
+# Ignora a pasta venv (ou .venv)
+venv/
+.venv/
+
+# Arquivos compilados do Python
+__pycache__/
+*.pyc
+
+# Arquivos de configuração do VSCode (opcional, mas recomendado)
+.vscode/
