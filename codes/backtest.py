@@ -18,6 +18,8 @@ def run_portfolio_construction(df_factors: pd.DataFrame,
     """
     df_factors_clean = df_factors.dropna()
 
+    RISK_FACTOR_FLOOR = 1e-5 #Mudança Temporária
+    df_factors_clean = df_factors_clean[df_factors_clean['fator_risco'] > RISK_FACTOR_FLOOR]
     if df_factors_clean.empty:
         return pd.Series(dtype=float)
 
