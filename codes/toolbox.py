@@ -139,9 +139,10 @@ def asymmetry_entropy_calculate(asset_returns, market_returns, c_level, n_total_
             sqrt_f_down = np.sqrt(np.maximum(0, f_down_val))
             return (sqrt_f_up - sqrt_f_down)**2
 
-        if pdf_up is None and pdf_down is None: return 0.0
-        if pdf_up is None: pdf_up = lambda x: 0.0
-        if pdf_down is None: pdf_down = lambda x: 0.0
+        if pdf_up is None:
+          pdf_up = lambda coords: np.array([0.0]) # <-- Retorna array
+        if pdf_down is None:
+          pdf_down = lambda coords: np.array([0.0]) # <-- Retorna array
         
         lim = 8.0
         with warnings.catch_warnings():
@@ -177,4 +178,17 @@ def downside_asymmetry_entropy_calculate(asset_returns, market_returns,c_level, 
     signal = np.sign(LQP - UQP)
     down_asy_score = signal * S_rho
     return down_asy_score
+
+
+
+def get_rebalance_dates(df_retornos: pd.DataFrame, 
+                        start_date: str, 
+                        end_date: str, 
+                        freq: str) -> pd.DatetimeIndex:
+    """Cria o "relógio" do backtest."""
+    mask = (df_retornos.index >= start_date) & (df_retornos.index <= end_date)
+    all_dates = df_retornos.loc[mask].index
+    rebal_dates = pd.date_range(start_date, end_date, freq=freq)
+    rebal_dates_in_index = all_dates.searchsorted(rebal_dates, side='right') - 1
+    return all_dates[rebal_dates_in_index].unique()
 
