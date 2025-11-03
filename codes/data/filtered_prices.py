@@ -119,7 +119,7 @@ volume_de_negociacao_full = volume_de_negociacao_full.drop(columns=['^BVSP'], er
 
 # --- 6. Loop Dinâmico (Rolling Window) ---
 print("Iniciando processamento em janelas (filtro de liquidez)...")
-d1, d2 = 252, 251
+d1, d2 = 252, 21
 num_windows = (df_valor_full.shape[0] - d1) // d2 + 1
 
 for i in range(num_windows):

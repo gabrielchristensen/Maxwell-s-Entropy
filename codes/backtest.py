@@ -7,8 +7,7 @@ from tqdm import tqdm
 
 # --- BLOCO 1: FUNÇÕES DO BACKTEST (O "MOTOR") ---
 # (Estas funções permanecem IDÊNTICAS. Elas são robustas
-# e não se importam de onde os dados vieram,
-# desde que 'all_factors_df' e 'df_retornos' estejam corretos.)
+# e recebem os DataFrames mestres.)
 
 def run_portfolio_construction(df_factors: pd.DataFrame,
                              asymmetry_percentile: float,
@@ -16,33 +15,44 @@ def run_portfolio_construction(df_factors: pd.DataFrame,
                              max_assets: int,
                              allocation_method: str) -> pd.Series:
     """
-    A "Lógica": Aplica o Filtro Duplo e a Alocação, usando os fatores dados.
-    (Esta função não muda)
+    A "Lógica": Aplica o Filtro Duplo e a Alocação,
+    com o filtro de quantil para robustez.
     """
+    # 1. Limpeza Inicial (Remove NaNs)
     df_factors_clean = df_factors.dropna()
 
-    # Filtro de robustez para "ativos fantasmas" (pré-IPO, etc.)
-    RISK_FACTOR_FLOOR = 1e-5 
-    df_factors_clean = df_factors_clean[df_factors_clean['fator_risco'] > RISK_FACTOR_FLOOR]
+    # --- [CORREÇÃO CRÍTICA: Filtro de Quantil] ---
+    # Remove os X% ativos com o MENOR fator_risco,
+    # que são suspeitos de serem "ativos fantasmas" (ex: PRIO3 em 2011).
+    
+    RISK_FACTOR_QUANTILE_FLOOR = 0.01 # Remove o 1% inferior
+    
+    if not df_factors_clean.empty and len(df_factors_clean) > 1:
+        risk_floor_value = df_factors_clean['fator_risco'].quantile(RISK_FACTOR_QUANTILE_FLOOR)
+        df_factors_clean = df_factors_clean[df_factors_clean['fator_risco'] > risk_floor_value]
     
     if df_factors_clean.empty:
-        return pd.Series(dtype=float)
-
+        return pd.Series(dtype=float) 
+    
+    # 2. Filtro 1 (Assimetria)
     assym_threshold = df_factors_clean['fator_assimetria'].quantile(asymmetry_percentile)
     grupo_filtrado_1 = df_factors_clean[df_factors_clean['fator_assimetria'] >= assym_threshold]
 
     if grupo_filtrado_1.empty:
         return pd.Series(dtype=float)
 
+    # 3. Filtro 2 (Risco)
     risk_threshold = grupo_filtrado_1['fator_risco'].quantile(risk_percentile)
     portifolio_final_df = grupo_filtrado_1[grupo_filtrado_1['fator_risco'] <= risk_threshold]
 
     if portifolio_final_df.empty:
         return pd.Series(dtype=float)
 
+    # 4. Limite de Ativos
     if max_assets > 0 and len(portifolio_final_df) > max_assets:
         portifolio_final_df = portifolio_final_df.nsmallest(max_assets, 'fator_risco')
 
+    # 5. Alocação
     if allocation_method == 'inverse_entropy':
         epsilon_risk = 1e-10
         inv_risk = 1.0 / (portifolio_final_df['fator_risco'] + epsilon_risk)
@@ -60,7 +70,6 @@ def calculate_performance_metrics(returns_series: pd.Series,
                                   var_quantile: float = 0.05) -> dict:
     """
     Calcula um conjunto abrangente de métricas de performance.
-    (Esta função não muda)
     """
     metrics = {}
     epsilon = 1e-10 
@@ -100,7 +109,6 @@ def run_backtest_simulation(df_retornos: pd.DataFrame,
                             risk_free_ticker: str): 
     """
     O "Simulador": Calcula retornos E GERA MÉTRICAS DE DIAGNÓSTICO.
-    (Esta função não muda)
     """
     portfolio_returns = []
     diagnostics_data = [] 
@@ -217,31 +225,46 @@ def main_run_backtest():
         'risk_percentile': 0.5,
         'max_assets': 20,
         'allocation_method': 'equal_weight',
-        'benchmark_ticker': 'IBOV',
+        'benchmark_ticker': '^BVSP',
         'risk_free_ticker': 'CDI',
         
         # --- [MODIFICADO] Parâmetros de Nomenclatura de Ficheiros ---
         'num_windows': 28, # Vai de 0 a 27
-        'factors_input_prefix': 'fatores_janela_',
-        'input_returns_file': 'retornos.csv', # <- Ainda precisa do MASTER de retornos
-        'output_diagnostics_file': 'diagnostico_detalhado.csv' 
+        'factors_input_prefix': r'fatores/fatores_janela_',
+        'returns_input_prefix': r'data/retornos_diarios_janela_', # <- Prefixo dos retornos
+        'output_diagnostics_file': r'resultados/diagnostico_detalhado.csv' 
     }
 
-    print("--- ESTÁGIO 2: EXECUÇÃO DO BACKTEST (Baseado em Janelas de Fatores) ---")
+    print("--- ESTÁGIO 2: EXECUÇÃO DO BACKTEST (Baseado em Janelas) ---")
     print(f"Configuração da Estratégia: {config}")
 
     # --- 2. Carregar Dados ---
-    # 2a. Carrega o MASTER de Retornos (Necessário para a simulação)
-    print(f"\nCarregando MASTER de retornos de '{config['input_returns_file']}'...")
-    try:
-        df_retornos = pd.read_csv(config['input_returns_file'], index_col=0, parse_dates=True)
-    except FileNotFoundError:
-        print(f"Erro Crítico: Arquivo MASTER de retornos '{config['input_returns_file']}' não encontrado.")
-        print("Este script precisa do 'retornos.csv' completo para simular o P&L.")
+    
+    # 2a. [NOVO] Carrega e Concatena TODOS os Ficheiros de Retorno
+    print(f"\nCarregando e concatenando {config['num_windows']} ficheiros de retorno...")
+    all_returns_list = []
+    for i in range(config['num_windows']):
+        returns_file = f"{config['returns_input_prefix']}{i}.csv"
+        try:
+            df_return_window = pd.read_csv(returns_file, index_col=0, parse_dates=True)
+            all_returns_list.append(df_return_window)
+        except FileNotFoundError:
+            print(f"Aviso: Arquivo de retorno '{returns_file}' não encontrado. Pulando.")
+    
+    if not all_returns_list:
+        print("Erro Crítico: Nenhum ficheiro de retorno foi carregado. Abortando.")
         return
+        
+    # Concatena todos, ordena pelo índice (data) e remove duplicados
+    # Isso cria o DataFrame mestre para simulação, sem look-ahead
+    df_retornos = pd.concat(all_returns_list)
+    df_retornos = df_retornos.sort_index()
+    # Remove datas duplicadas, mantendo a ÚLTIMA (mais recente)
+    df_retornos = df_retornos.loc[~df_retornos.index.duplicated(keep='last')]
+    print(f"DataFrame Mestre de Retornos criado com {len(df_retornos)} linhas de {df_retornos.index.min().date()} a {df_retornos.index.max().date()}.")
 
-    # 2b. [MODIFICADO] Carrega e Concatena TODOS os Ficheiros de Fatores
-    print(f"Carregando {config['num_windows']} ficheiros de fatores (prefixo: '{config['factors_input_prefix']}') ...")
+    # 2b. Carrega e Concatena TODOS os Ficheiros de Fatores
+    print(f"Carregando {config['num_windows']} ficheiros de fatores...")
     all_factors_list = []
     for i in range(config['num_windows']):
         factor_file = f"{config['factors_input_prefix']}{i}.csv"
@@ -255,16 +278,12 @@ def main_run_backtest():
         print("Erro Crítico: Nenhum ficheiro de fator foi carregado. Abortando.")
         return
 
-    # Cria o DataFrame MASTER de fatores
     all_factors_df = pd.concat(all_factors_list)
     print(f"Total de {len(all_factors_df)} linhas de fator carregadas.")
 
-    # --- 3. [MODIFICADO] Obter Datas de Rebalanceamento (a partir dos fatores) ---
-    
-    # As datas de rebalanceamento são as datas únicas no nosso DF de fatores
+    # --- 3. Obter Datas de Rebalanceamento (a partir dos fatores) ---
     all_rebalance_dates = all_factors_df.index.get_level_values('date').unique().sort_values()
     
-    # Filtra as datas para o período de simulação desejado
     rebalance_dates = all_rebalance_dates[
         (all_rebalance_dates >= pd.Timestamp(config['start_date'])) &
         (all_rebalance_dates <= pd.Timestamp(config['end_date']))
@@ -280,8 +299,6 @@ def main_run_backtest():
     start_loop = time.perf_counter()
 
     # --- 4. Loop Principal (RÁPIDO) ---
-    # (Este loop não muda, pois opera no 'all_factors_df' mestre
-    # e nas 'rebalance_dates' filtradas)
     for t_date in tqdm(rebalance_dates): 
         try:
             df_factors_for_date = all_factors_df.loc[t_date]
@@ -314,7 +331,7 @@ def main_run_backtest():
 
     # --- 6. Salvar Resultados ---
     if not results_df.empty:
-        results_df.to_csv("resultados_backtest.csv")
+        results_df.to_csv(r"resultados/resultados_backtest.csv")
         print("Resultados principais (com CDI) salvos em 'resultados_backtest.csv'")
 
     if not df_diagnostics.empty:
