@@ -4,8 +4,11 @@ import warnings
 import os 
 import time
 from tqdm import tqdm 
-from toolbox import *
 
+# --- BLOCO 1: FUNÇÕES DO BACKTEST (O "MOTOR") ---
+# (Estas funções permanecem IDÊNTICAS. Elas são robustas
+# e não se importam de onde os dados vieram,
+# desde que 'all_factors_df' e 'df_retornos' estejam corretos.)
 
 def run_portfolio_construction(df_factors: pd.DataFrame,
                              asymmetry_percentile: float,
@@ -14,12 +17,14 @@ def run_portfolio_construction(df_factors: pd.DataFrame,
                              allocation_method: str) -> pd.Series:
     """
     A "Lógica": Aplica o Filtro Duplo e a Alocação, usando os fatores dados.
-    Retorna a série de pesos.
+    (Esta função não muda)
     """
     df_factors_clean = df_factors.dropna()
 
-    RISK_FACTOR_FLOOR = 1e-5 #Mudança Temporária
+    # Filtro de robustez para "ativos fantasmas" (pré-IPO, etc.)
+    RISK_FACTOR_FLOOR = 1e-5 
     df_factors_clean = df_factors_clean[df_factors_clean['fator_risco'] > RISK_FACTOR_FLOOR]
+    
     if df_factors_clean.empty:
         return pd.Series(dtype=float)
 
@@ -55,62 +60,47 @@ def calculate_performance_metrics(returns_series: pd.Series,
                                   var_quantile: float = 0.05) -> dict:
     """
     Calcula um conjunto abrangente de métricas de performance.
+    (Esta função não muda)
     """
     metrics = {}
-    epsilon = 1e-10 # Para evitar divisão por zero
-
-    # --- Lidar com retornos vazios ---
+    epsilon = 1e-10 
     if returns_series.empty or len(returns_series) < 2:
         keys = ['CAGR', 'Volatilidade', 'Sharpe Ratio', 'Max Drawdown', 
                 'Sortino Ratio', 'Calmar Ratio', 'VaR Histórico (95%)', 'Rachev Ratio (95%)']
         return {k: 0.0 for k in keys}
         
     n_days = len(returns_series)
-    
-    # --- Métricas Básicas (CAGR, Vol, Sharpe) ---
     cumulative = (1 + returns_series).cumprod()
     metrics['CAGR'] = (cumulative.iloc[-1] ** (252 / n_days)) - 1
     metrics['Volatilidade'] = returns_series.std() * np.sqrt(252)
     metrics['Sharpe Ratio'] = (returns_series.mean() - rf_daily_mean) / (returns_series.std() + epsilon) * np.sqrt(252)
     
-    # --- Max Drawdown ---
     running_max = cumulative.rolling(window=n_days, min_periods=1).max()
     drawdown = (cumulative / running_max) - 1
     metrics['Max Drawdown'] = drawdown.min()
-    
-    # --- Calmar Ratio ---
     metrics['Calmar Ratio'] = metrics['CAGR'] / (abs(metrics['Max Drawdown']) + epsilon)
     
-    # --- Sortino Ratio ---
-    # (Calculado usando retornos diários)
     negative_returns = returns_series[returns_series < 0]
-    downside_dev = negative_returns.std() # Desvio padrão diário dos retornos negativos
+    downside_dev = negative_returns.std() 
     metrics['Sortino Ratio'] = (returns_series.mean() - rf_daily_mean) / (downside_dev + epsilon) * np.sqrt(252)
     
-    # --- VaR (Value at Risk) Histórico ---
-    # (Ex: 0.05 para 95% VaR)
     metrics['VaR Histórico (95%)'] = returns_series.quantile(var_quantile)
     
-    # --- Rachev Ratio ---
-    # (Ratio de Ganhos na Cauda (CVaR Ganho) vs Perdas na Cauda (CVaR Perda))
     var_loss = metrics['VaR Histórico (95%)']
-    cvar_loss = returns_series[returns_series <= var_loss].mean() # CVaR (Expected Shortfall)
-    
-    var_gain = returns_series.quantile(1 - var_quantile) # 95º percentil
-    cvar_gain = returns_series[returns_series >= var_gain].mean() # CVaR de Ganhos
-    
+    cvar_loss = returns_series[returns_series <= var_loss].mean() 
+    var_gain = returns_series.quantile(1 - var_quantile) 
+    cvar_gain = returns_series[returns_series >= var_gain].mean() 
     metrics['Rachev Ratio (95%)'] = cvar_gain / (abs(cvar_loss) + epsilon)
     
     return metrics
-# --- [FIM DA NOVA FUNÇÃO] ---
-
 
 def run_backtest_simulation(df_retornos: pd.DataFrame,
                             portfolio_details: dict,
                             benchmark_ticker: str,
                             risk_free_ticker: str): 
     """
-    O "Simulador": Calcula retornos E GERA MÉTRICAS DE DIAGNÓSTICO DETALHADAS.
+    O "Simulador": Calcula retornos E GERA MÉTRICAS DE DIAGNÓSTICO.
+    (Esta função não muda)
     """
     portfolio_returns = []
     diagnostics_data = [] 
@@ -146,7 +136,6 @@ def run_backtest_simulation(df_retornos: pd.DataFrame,
         daily_portfolio_returns = returns_subset.fillna(0).dot(weights)
         portfolio_returns.append(daily_portfolio_returns)
 
-        # --- Cálculo de Diagnóstico (como antes) ---
         for ticker in weights.index:
             ticker_returns_period = period_returns[ticker].dropna()
             if not ticker_returns_period.empty:
@@ -162,7 +151,6 @@ def run_backtest_simulation(df_retornos: pd.DataFrame,
                 'fator_risco': fator_risco, 'fator_assimetria': fator_assimetria,
                 'holding_period_return': holding_period_return
             })
-        # --- Fim do Bloco de Diagnóstico ---
 
     if not portfolio_returns:
         print("Aviso: A série de retornos do portfólio está vazia após a simulação.")
@@ -171,36 +159,24 @@ def run_backtest_simulation(df_retornos: pd.DataFrame,
     strategy_returns_series = pd.concat(portfolio_returns)
     strategy_returns_series.name = "Estrategia_Duplo_Fator"
 
-    # --- [MODIFICADO] Análise de Resultados ---
-    
-    # 1. Alinha todos os retornos (Estratégia, Benchmark, CDI)
     benchmark_returns = df_retornos.loc[strategy_returns_series.index, benchmark_ticker]
-    cdi_returns = df_retornos.loc[strategy_returns_series.index, risk_free_ticker] # <-- REQUISIÇÃO 1
-    rf_diario = cdi_returns.mean() # Usa a média real do período
+    cdi_returns = df_retornos.loc[strategy_returns_series.index, risk_free_ticker] 
+    rf_diario = cdi_returns.mean() 
     
-    # 2. Calcula métricas usando a nova função helper
     strategy_metrics = calculate_performance_metrics(strategy_returns_series, rf_diario)
     benchmark_metrics = calculate_performance_metrics(benchmark_returns, rf_diario)
     
-    # 3. Monta DataFrame de resultados (com CDI) <-- REQUISIÇÃO 1
     strategy_cumulative = (1 + strategy_returns_series).cumprod()
     benchmark_cumulative = (1 + benchmark_returns).cumprod()
-    cdi_cumulative = (1 + cdi_returns).cumprod() # <-- REQUISIÇÃO 1
+    cdi_cumulative = (1 + cdi_returns).cumprod() 
     
     results_df = pd.DataFrame({
-        'Estrategia': strategy_returns_series, 
-        'Benchmark': benchmark_returns,
-        'CDI': cdi_returns, # <-- REQUISIÇÃO 1
-        'Estrategia_Acum': strategy_cumulative, 
-        'Benchmark_Acum': benchmark_cumulative,
-        'CDI_Acum': cdi_cumulative # <-- REQUISIÇÃO 1
+        'Estrategia': strategy_returns_series, 'Benchmark': benchmark_returns, 'CDI': cdi_returns,
+        'Estrategia_Acum': strategy_cumulative, 'Benchmark_Acum': benchmark_cumulative, 'CDI_Acum': cdi_cumulative
     })
 
-    # 4. Imprime Métricas Detalhadas <-- REQUISIÇÃO 2
     print("\n--- RESULTADOS DO BACKTEST ---")
-    
     def print_metrics(metrics_dict, title):
-        """Função auxiliar para imprimir métricas de forma limpa."""
         print(f"\n{title}:")
         print(f"  - Retorno Anualizado (CAGR): {metrics_dict['CAGR']:.2%}")
         print(f"  - Volatilidade Anualizada:   {metrics_dict['Volatilidade']:.2%}")
@@ -210,11 +186,10 @@ def run_backtest_simulation(df_retornos: pd.DataFrame,
         print(f"  - Calmar Ratio:              {metrics_dict['Calmar Ratio']:.2f}")
         print(f"  - VaR Histórico (95%):       {metrics_dict['VaR Histórico (95%)']:.2%}")
         print(f"  - Rachev Ratio (95%):        {metrics_dict['Rachev Ratio (95%)']:.2f}")
-
+    
     print_metrics(strategy_metrics, "Métricas da Estratégia (Duplo Fator)")
     print_metrics(benchmark_metrics, f"Métricas do Benchmark ({benchmark_ticker})")
 
-    # --- Diagnóstico (como antes) ---
     df_diagnostics = pd.DataFrame(diagnostics_data)
     if not df_diagnostics.empty:
         df_diagnostics = df_diagnostics.set_index(['rebalance_date', 'ticker'])
@@ -236,60 +211,77 @@ def main_run_backtest():
 
     # --- 1. Definição de Parâmetros da ESTRATÉGIA ---
     config = {
-        'rebal_frequency': 'BM',
-        'start_date': '2015-12-01', 
-        'end_date': '2024-12-31',
+        'start_date': '2011-01-01', # Data de início da SIMULAÇÃO
+        'end_date': '2024-12-31',   # Data de fim da SIMULAÇÃO
         'asymmetry_percentile': 0.5,
         'risk_percentile': 0.5,
         'max_assets': 20,
-        'allocation_method': 'equal_weight', # Mantido 'equal_weight'
+        'allocation_method': 'equal_weight',
         'benchmark_ticker': 'IBOV',
         'risk_free_ticker': 'CDI',
-        'input_returns_file': 'retornos.csv',
-        'input_factors_file': 'fatores_10anos.csv', 
+        
+        # --- [MODIFICADO] Parâmetros de Nomenclatura de Ficheiros ---
+        'num_windows': 28, # Vai de 0 a 27
+        'factors_input_prefix': 'fatores_janela_',
+        'input_returns_file': 'retornos.csv', # <- Ainda precisa do MASTER de retornos
         'output_diagnostics_file': 'diagnostico_detalhado.csv' 
     }
 
-    print("--- ESTÁGIO 2: EXECUÇÃO DO BACKTEST (COM MÉTRICAS AVANÇADAS) ---")
-    print(f"Configuração da Estratégia:")
-    print(f"  - Frequência: {config['rebal_frequency']}")
-    print(f"  - Período: {config['start_date']} a {config['end_date']}")
-    print(f"  - Filtro Assimetria (>) : {config['asymmetry_percentile']:.0%}")
-    print(f"  - Filtro Risco (<)      : {config['risk_percentile']:.0%}")
-    print(f"  - Máximo de Ativos      : {config['max_assets'] if config['max_assets'] > 0 else 'Sem Limite'}")
-    print(f"  - Alocação              : {config['allocation_method']}")
+    print("--- ESTÁGIO 2: EXECUÇÃO DO BACKTEST (Baseado em Janelas de Fatores) ---")
+    print(f"Configuração da Estratégia: {config}")
 
     # --- 2. Carregar Dados ---
-    print(f"\nCarregando retornos de '{config['input_returns_file']}'...")
+    # 2a. Carrega o MASTER de Retornos (Necessário para a simulação)
+    print(f"\nCarregando MASTER de retornos de '{config['input_returns_file']}'...")
     try:
         df_retornos = pd.read_csv(config['input_returns_file'], index_col=0, parse_dates=True)
     except FileNotFoundError:
-        print(f"Erro Crítico: Arquivo de retornos '{config['input_returns_file']}' não encontrado.")
+        print(f"Erro Crítico: Arquivo MASTER de retornos '{config['input_returns_file']}' não encontrado.")
+        print("Este script precisa do 'retornos.csv' completo para simular o P&L.")
         return
 
-    print(f"Carregando fatores pré-calculados de '{config['input_factors_file']}'...")
-    try:
-        all_factors_df = pd.read_csv(config['input_factors_file'], index_col=[0, 1], parse_dates=[0])
-    except FileNotFoundError:
-        print(f"Erro Crítico: Arquivo de fatores '{config['input_factors_file']}' não encontrado.")
+    # 2b. [MODIFICADO] Carrega e Concatena TODOS os Ficheiros de Fatores
+    print(f"Carregando {config['num_windows']} ficheiros de fatores (prefixo: '{config['factors_input_prefix']}') ...")
+    all_factors_list = []
+    for i in range(config['num_windows']):
+        factor_file = f"{config['factors_input_prefix']}{i}.csv"
+        try:
+            df_factor_window = pd.read_csv(factor_file, index_col=[0, 1], parse_dates=[0])
+            all_factors_list.append(df_factor_window)
+        except FileNotFoundError:
+            print(f"Aviso: Arquivo de fator '{factor_file}' não encontrado. Pulando.")
+    
+    if not all_factors_list:
+        print("Erro Crítico: Nenhum ficheiro de fator foi carregado. Abortando.")
         return
 
-    # --- 3. Obter Datas de Rebalanceamento ---
-    rebalance_dates = get_rebalance_dates(df_retornos,
-                                          config['start_date'],
-                                          config['end_date'],
-                                          config['rebal_frequency'])
+    # Cria o DataFrame MASTER de fatores
+    all_factors_df = pd.concat(all_factors_list)
+    print(f"Total de {len(all_factors_df)} linhas de fator carregadas.")
 
+    # --- 3. [MODIFICADO] Obter Datas de Rebalanceamento (a partir dos fatores) ---
+    
+    # As datas de rebalanceamento são as datas únicas no nosso DF de fatores
+    all_rebalance_dates = all_factors_df.index.get_level_values('date').unique().sort_values()
+    
+    # Filtra as datas para o período de simulação desejado
+    rebalance_dates = all_rebalance_dates[
+        (all_rebalance_dates >= pd.Timestamp(config['start_date'])) &
+        (all_rebalance_dates <= pd.Timestamp(config['end_date']))
+    ]
+    
     if len(rebalance_dates) == 0:
         print("Erro: Nenhuma data de rebalanceamento encontrada no período de simulação.")
         return
 
-    portfolio_details = {}
+    portfolio_details = {} 
 
     print(f"\nIniciando loop de {len(rebalance_dates)} datas para construção do portfólio...")
     start_loop = time.perf_counter()
 
     # --- 4. Loop Principal (RÁPIDO) ---
+    # (Este loop não muda, pois opera no 'all_factors_df' mestre
+    # e nas 'rebalance_dates' filtradas)
     for t_date in tqdm(rebalance_dates): 
         try:
             df_factors_for_date = all_factors_df.loc[t_date]
