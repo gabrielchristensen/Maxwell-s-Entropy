@@ -11,11 +11,11 @@ from tqdm import tqdm
 try:
     from toolbox import (
         calcular_risk_estimator, 
-        downside_asymmetry_entropy_calculate,
-        # As funções base são importadas automaticamente pelo toolbox
+        downside_asymmetry_entropy_calculate
     )
 except ImportError:
     print("Erro: Não foi possível encontrar o 'toolbox.py'.")
+    print("Certifique-se de que o ficheiro com as 4 funções de cálculo está na mesma pasta.")
     exit()
 
 # --- BLOCO 1: FUNÇÃO "TRABALHADORA" (A mesma de antes) ---
@@ -39,19 +39,14 @@ def process_single_task(task: tuple,
     end_date = t_date
     start_date = end_date - pd.DateOffset(days=lookback_days)
     
-    # Fatia o DataFrame MESTRE
     try:
-        # Tenta fatiar. Pode falhar se a data de início não existir.
         window_df = df_retornos.loc[start_date:end_date]
     except KeyError:
-        # Se falhar, retorna vazio (comum no início do dataset)
         return {
             'date': t_date, 'ticker': ticker,
             'fator_risco': np.nan, 'fator_assimetria': np.nan
         }
 
-    # Prepara os arrays numpy
-    # (Verifica se os tickers existem na janela, caso contrário retorna nan)
     if ticker not in window_df.columns:
         return {'date': t_date, 'ticker': ticker, 'fator_risco': np.nan, 'fator_assimetria': np.nan}
         
@@ -59,12 +54,10 @@ def process_single_task(task: tuple,
     market_returns_np = window_df[benchmark_ticker].to_numpy()
     rf_returns_np = window_df[risk_free_ticker].to_numpy()
     
-    # Chama a Função Core 1 (Paper 1)
     fator_risco = calcular_risk_estimator(asset_returns_np, 
                                           rf_returns_np,
                                           n_min)
     
-    # Chama a Função Core 2 (Paper 2)
     fator_assimetria = downside_asymmetry_entropy_calculate(asset_returns_np, 
                                                           market_returns_np, 
                                                           c_level,
@@ -77,7 +70,7 @@ def process_single_task(task: tuple,
         'fator_assimetria': fator_assimetria
     }
 
-# --- BLOCO 2: FUNÇÃO AUXILIAR (Relógio) ---
+# --- BLOCO 2: FUNÇÕES AUXILIARES ---
 
 def get_rebalance_dates(df_index: pd.DatetimeIndex, 
                         start_date: str, 
@@ -86,11 +79,30 @@ def get_rebalance_dates(df_index: pd.DatetimeIndex,
     """Cria o "relógio" do backtest alinhado ao índice de retornos."""
     mask = (df_index >= start_date) & (df_index <= end_date)
     all_dates = df_index[mask]
-    rebal_dates = pd.date_range(start_date, end_date, freq=freq)
-    rebal_dates_in_index = all_dates.searchsorted(rebal_dates, side='right') - 1
-    valid_rebal_dates = all_dates[rebal_dates_in_index].unique()
+    
+    # Gera as datas de rebalanceamento "ideais"
+    rebal_dates_ideal = pd.date_range(start_date, end_date, freq=freq)
+    
+    # Encontra as datas de negociação reais mais próximas (anteriores)
+    rebal_dates_in_index = all_dates.searchsorted(rebal_dates_ideal, side='right') - 1
+    
+    # Garante que não haja índices negativos e pega as datas reais
+    valid_rebal_dates = all_dates[rebal_dates_in_index[rebal_dates_in_index >= 0]].unique()
+    
+    # Filtra novamente para garantir que está dentro do start_date (searchsorted pode pegar data anterior)
     return valid_rebal_dates[valid_rebal_dates >= pd.Timestamp(start_date)]
 
+def get_universe_for_date(t_date: pd.Timestamp, universe_ranges: list) -> list:
+    """
+    Encontra a lista de tickers líquidos válidos para uma data de rebalanceamento específica.
+    """
+    for window in universe_ranges:
+        # Verifica se a data de rebalanceamento está DENTRO do período de validade da janela
+        if t_date >= window['start'] and t_date <= window['end']:
+            return window['universe'] # Retorna a lista de tickers
+    
+    # Se nenhuma janela cobrir esta data, retorna uma lista vazia
+    return []
 
 # --- BLOCO 3: EXECUÇÃO PRINCIPAL (ESTÁGIO 1 - UNIVERSO DINÂMICO) ---
 
@@ -109,12 +121,12 @@ def main_calculate_factors_dynamic_universe():
         'end_date': '2024-12-31',   # Fim do período
         'n_min': 30,             # Limite de robustez (N mínimo de dias)
         'c_level': 0.0,          # Nível 'c' para o DOWN_ASY
-        'benchmark_ticker': 'IBOV',
+        'benchmark_ticker': '^BVSP',
         'risk_free_ticker': 'CDI',
         
         'num_windows': 28, # Vai de 0 a 27
-        'returns_input_prefix': 'retornos_diarios_janela_',
-        'output_file': 'fatores_master.csv' # <-- Saída é UM ÚNICO ficheiro
+        'returns_input_prefix': r'data/retornos_diarios_janela_',
+        'output_file': r'fatores/fatores_master.csv' # <-- Saída é UM ÚNICO ficheiro
     }
     
     print(f"--- ESTÁGIO 1: CÁLCULO MENSAL (UNIVERSO DINÂMICO) ---")
@@ -124,23 +136,29 @@ def main_calculate_factors_dynamic_universe():
     
     print(f"Carregando {config['num_windows']} ficheiros de retorno para montar dados mestres...")
     all_returns_list = []
-    universe_map = {} # Dicionário: {ano -> [lista de tickers]}
-    
-    # Assumindo que janela_0 = 2011, janela_1 = 2012, etc.
-    # Ajuste o 'start_year' se a lógica for diferente
-    start_year = 2011 
+    universe_ranges = [] # Lista de dicionários: [{'start', 'end', 'universe'}]
     
     for i in range(config['num_windows']):
         returns_file = f"{config['returns_input_prefix']}{i}.csv"
-        current_year = start_year + i
         
         try:
             df_return_window = pd.read_csv(returns_file, index_col=0, parse_dates=True)
+            if df_return_window.empty:
+                print(f"Aviso: {returns_file} está vazio. Pulando.")
+                continue
+                
             all_returns_list.append(df_return_window)
             
-            # Mapeia o universo: quais tickers são líquidos neste ano?
+            # [LÓGICA CORRIGIDA] Mapeia o universo e seu período de validade
+            start_date = df_return_window.index.min()
+            end_date = df_return_window.index.max()
             universe_tickers = [t for t in df_return_window.columns if t not in [config['benchmark_ticker'], config['risk_free_ticker']]]
-            universe_map[current_year] = universe_tickers
+            
+            universe_ranges.append({
+                'start': start_date,
+                'end': end_date,
+                'universe': universe_tickers
+            })
             
         except FileNotFoundError:
             print(f"Aviso: Arquivo de retorno '{returns_file}' não encontrado. Pulando.")
@@ -149,15 +167,15 @@ def main_calculate_factors_dynamic_universe():
         print("Erro Crítico: Nenhum ficheiro de retorno foi carregado. Abortando.")
         return
         
-    # Concatena todos os retornos e remove duplicados
+    # Concatena todos os retornos e remove duplicados (mantém o mais recente)
     df_retornos_master = pd.concat(all_returns_list)
     df_retornos_master = df_retornos_master.sort_index()
     df_retornos_master = df_retornos_master.loc[~df_retornos_master.index.duplicated(keep='last')]
     
     print(f"DataFrame Mestre de Retornos criado com {len(df_retornos_master)} linhas.")
-    print(f"Mapa de Universo criado para {len(universe_map)} anos.")
+    print(f"Mapa de Universo criado com {len(universe_ranges)} períodos.")
     
-    # (Opcional, mas recomendado) Salva o master de retornos para o Estágio 2 usar
+    # Salva o master de retornos para o Estágio 2 usar
     df_retornos_master.to_csv("retornos_master.csv")
     print("DataFrame Mestre de Retornos salvo em 'retornos_master.csv'")
 
@@ -172,13 +190,14 @@ def main_calculate_factors_dynamic_universe():
     print(f"Gerando lista de tarefas para {len(rebalance_dates)} datas...")
     all_tasks = []
     for t_date in rebalance_dates:
-        year = t_date.year
-        if year in universe_map:
-            liquid_tickers_for_this_year = universe_map[year]
-            for ticker in liquid_tickers_for_this_year:
+        # Encontra o universo líquido para esta data de rebalanceamento
+        liquid_tickers = get_universe_for_date(t_date, universe_ranges)
+        
+        if liquid_tickers:
+            for ticker in liquid_tickers:
                 all_tasks.append((t_date, ticker))
         else:
-            print(f"Aviso: Nenhum universo encontrado para o ano {year}. Pulando data {t_date.date()}")
+            print(f"Aviso: Nenhum universo encontrado para a data {t_date.date()}. Pulando data.")
             
     if len(all_tasks) == 0:
         print("Erro: Nenhuma tarefa a ser processada (verifique o mapa de universo e as datas).")
