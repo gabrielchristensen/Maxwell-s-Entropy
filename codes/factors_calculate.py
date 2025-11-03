@@ -85,8 +85,8 @@ def main_calculate_factors_by_window():
         'risk_free_ticker': 'CDI',
         
         # --- [NOVO] Parâmetros de Nomenclatura de Ficheiros ---
-        'num_windows': 27,       # Número de ficheiros de janela 
-        'input_prefix': r'data/retornos_diarios_janela_',
+        'num_windows': 165,       # Número de ficheiros de janela 
+        'input_prefix': r'data_mamaco/retornos_diarios_janela_',
         'output_prefix': r'fatores/fatores_janela_'
     }
     

@@ -75,7 +75,6 @@ try:
     cdi_df = cdi_df[~cdi_df.index.duplicated(keep='first')]
 
     # Processamento do CDI (criação do ÍNDICE CUMULATIVO)
-    cdi_df['CDI'] = cdi_df['CDI'] / 100
     cdi_diario_fator = (1 + cdi_df['CDI'])**(1/252)
     cdi_index = cdi_diario_fator.cumprod() # Gera o índice
     
@@ -169,7 +168,7 @@ for i in range(num_windows):
     # --- 7. Salvar CSV (agora de RETORNOS) ---
     num_acoes = len(colunas_filtradas_nome)
     tem_cdi_str = " (com CDI)" if cdi_index_aligned is not None else " (sem CDI)"
-    output_filename = f'retornos_diarios_janela_{i}.csv' # Nome do arquivo alterado
+    output_filename = f'dad/retornos_diarios_janela_{i}.csv' # Nome do arquivo alterado
     
     print(f"Salvando {output_filename} com {num_acoes} ações + Índices{tem_cdi_str}...")
     retornos_intermediario.to_csv(output_filename)

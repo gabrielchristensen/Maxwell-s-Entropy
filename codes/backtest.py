@@ -279,6 +279,7 @@ def main_run_backtest():
         return
 
     all_factors_df = pd.concat(all_factors_list)
+    all_factors_df.to_csv(r'resultados/tabela_fatores.csv')
     print(f"Total de {len(all_factors_df)} linhas de fator carregadas.")
 
     # --- 3. Obter Datas de Rebalanceamento (a partir dos fatores) ---
