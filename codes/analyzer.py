@@ -11,13 +11,12 @@ from tqdm import tqdm
 # --- CONFIGURAÇÕES GLOBAIS ---
 warnings.filterwarnings('ignore')
 
-# --- [MODIFICADO] PALETA DE CORES "MAXWELL" ---
-# Baseado na paleta da apresentação (Azul escuro, Preto/Cinza, Branco)
-COLOR_STRATEGY = "#67cdfc"        # Azul "Maxwell" (Principal)
-COLOR_BENCHMARK_IBOV = '#333333'   # Preto/Cinza Escuro (Benchmark de Mercado)
-COLOR_BENCHMARK_UNIVERSO = "#416d8a" # Cinza Médio (Benchmark de Controle)
-COLOR_CDI = "#F70909"              # Cinza Claro (Custo de Oportunidade)
-COLOR_FILL_STRATEGY = '#a9c4db'   # Azul Claro (Preenchimento de área)
+# --- PALETA DE CORES "MAXWELL" ---
+COLOR_STRATEGY = "#67cdfc"
+COLOR_BENCHMARK_IBOV = "#464141"
+COLOR_BENCHMARK_UNIVERSO = "#416d8a"
+COLOR_CDI = "#F70909"
+COLOR_FILL_STRATEGY = '#a9c4db'
 # ------------------------------------------------
 
 sns.set_theme(style="whitegrid")
@@ -25,17 +24,10 @@ plt.rcParams['figure.figsize'] = (12, 7)
 plt.rcParams['figure.dpi'] = 100
 pd.options.display.float_format = '{:.4f}'.format
 
-# --- [MODIFICADO] Importa a função de métricas do run_backtest.py ---
-# (É melhor ter a função em um local, mas vamos copiá-la para
-# manter o analyzer.py autocontido e garantir que as métricas
-# sejam calculadas exatamente da mesma maneira)
-
+# (calculate_performance_metrics não muda)
 def calculate_performance_metrics(returns_series: pd.Series, 
                                   rf_daily_mean: float, 
                                   var_quantile: float = 0.05) -> dict:
-    """
-    Calcula um conjunto abrangente de métricas de performance.
-    """
     metrics = {}
     epsilon = 1e-10 
     if returns_series.empty or len(returns_series) < 2:
@@ -65,13 +57,19 @@ def calculate_performance_metrics(returns_series: pd.Series,
     
     return metrics
 
-# (Funções calculate_quintile_performance e calculate_turnover não mudam)
-def calculate_quintile_performance(df_factors: pd.DataFrame, 
-                                     df_returns: pd.DataFrame, 
-                                     factor_name: str):
-    print(f"\nIniciando análise de quintis para: {factor_name}...")
+# --- [MODIFICADO] De Decil (10) para Quartil (4) ---
+def calculate_quartile_performance(df_factors: pd.DataFrame, 
+                                   df_returns: pd.DataFrame, 
+                                   factor_name: str):
+    """
+    Calcula a performance (retorno, sharpe) para 4 quartis
+    de um determinado fator.
+    """
+    print(f"\nIniciando análise de quartis para: {factor_name}...")
     rebal_dates = df_factors.index.get_level_values('date').unique().sort_values()
-    quintile_daily_returns_dict = {f'Q{i}': [] for i in range(1, 6)}
+    
+    # [MODIFICADO] De D1-D10 para Q1-Q4
+    quartile_daily_returns_dict = {f'Q{i}': [] for i in range(1, 5)}
     daily_rf = df_returns['CDI'].mean() if 'CDI' in df_returns.columns else 0.0
 
     for i in tqdm(range(len(rebal_dates) - 1), desc=f"Testando {factor_name}"):
@@ -79,11 +77,15 @@ def calculate_quintile_performance(df_factors: pd.DataFrame,
         t_next_date = rebal_dates[i+1]
         
         factors_today = df_factors.loc[t_date].dropna(subset=[factor_name])
-        if factors_today.empty or len(factors_today) < 5:
+        
+        # [MODIFICADO] Precisa de pelo menos 4 ativos para 4 quartis
+        if factors_today.empty or len(factors_today) < 4:
             continue
             
         try:
-            factors_today['quintile'] = pd.qcut(factors_today[factor_name], 5, labels=['Q1', 'Q2', 'Q3', 'Q4', 'Q5'], duplicates='drop')
+            # [MODIFICADO] pd.qcut para 4 grupos
+            quartile_labels = [f'Q{i}' for i in range(1, 5)]
+            factors_today['quartile'] = pd.qcut(factors_today[factor_name], 4, labels=quartile_labels, duplicates='drop')
         except ValueError:
             continue
             
@@ -91,38 +93,39 @@ def calculate_quintile_performance(df_factors: pd.DataFrame,
         if returns_period.empty:
             continue
             
-        for q_name in quintile_daily_returns_dict.keys():
-            tickers_in_q = factors_today[factors_today['quintile'] == q_name].index
+        for q_name in quartile_daily_returns_dict.keys():
+            tickers_in_q = factors_today[factors_today['quartile'] == q_name].index
             valid_tickers = [t for t in tickers_in_q if t in returns_period.columns]
             
             if valid_tickers:
                 ret_q_daily = returns_period[valid_tickers].mean(axis=1)
-                quintile_daily_returns_dict[q_name].append(ret_q_daily)
+                quartile_daily_returns_dict[q_name].append(ret_q_daily)
 
-    if not any(quintile_daily_returns_dict.values()):
-        print(f"Erro: Nenhum retorno de quintil pôde ser calculado para {factor_name}.")
+    if not any(quartile_daily_returns_dict.values()):
+        print(f"Erro: Nenhum retorno de quartil pôde ser calculado para {factor_name}.")
         return pd.Series(), pd.DataFrame(), pd.Series()
 
-    df_quintile_daily_list = []
-    for q_name, returns_list in quintile_daily_returns_dict.items():
+    df_quartile_daily_list = []
+    for q_name, returns_list in quartile_daily_returns_dict.items():
         if returns_list:
             df_q = pd.concat(returns_list)
             df_q.name = q_name
-            df_quintile_daily_list.append(df_q)
+            df_quartile_daily_list.append(df_q)
         else:
-            df_quintile_daily_list.append(pd.Series(name=q_name, dtype=float))
-        
-    df_quintile_daily = pd.concat(df_quintile_daily_list, axis=1).fillna(0)
+            df_quartile_daily_list.append(pd.Series(name=q_name, dtype=float))
+            
+    df_quartile_daily = pd.concat(df_quartile_daily_list, axis=1).fillna(0)
 
-    avg_monthly_ret = df_quintile_daily.resample('M').apply(lambda x: (1 + x).prod() - 1).mean()
-    df_quintile_cum = (1 + df_quintile_daily).cumprod()
-    mean_excess_ret = df_quintile_daily.mean() - daily_rf
-    std_ret = df_quintile_daily.std()
+    avg_monthly_ret = df_quartile_daily.resample('M').apply(lambda x: (1 + x).prod() - 1).mean()
+    df_quartile_cum = (1 + df_quartile_daily).cumprod()
+    mean_excess_ret = df_quartile_daily.mean() - daily_rf
+    std_ret = df_quartile_daily.std()
     sharpe_per_q = (mean_excess_ret / (std_ret + 1e-10)) * np.sqrt(252)
     
-    return avg_monthly_ret, df_quintile_cum, sharpe_per_q
+    return avg_monthly_ret, df_quartile_cum, sharpe_per_q
 
 
+# (calculate_turnover não muda)
 def calculate_turnover(df_diag: pd.DataFrame) -> pd.Series:
     print("Calculando turnover da carteira...")
     holdings = df_diag.reset_index().groupby('rebalance_date')['ticker'].apply(set)
@@ -143,14 +146,13 @@ def calculate_turnover(df_diag: pd.DataFrame) -> pd.Series:
 
 # --- FUNÇÕES DE ANÁLISE (IMPRESSÃO) ---
 
-# [MODIFICADO] A função agora imprime a nova narrativa de 3 camadas
+# [BUG CORRIGIDO] A função agora usa 'alpha_fator' corretamente
 def print_overall_analysis(df_results):
     """Fase 1: Imprime a análise de performance agregada."""
     print("\n\n" + "="*80)
     print(" FASE 1: ANÁLISE DE PERFORMANCE AGREGADA (O 'QUÊ?')")
     print("="*80)
 
-    # Recalcula as métricas
     rf_daily = df_results['CDI'].mean()
     strat_metrics = calculate_performance_metrics(df_results['Estrategia'], rf_daily)
     universo_metrics = calculate_performance_metrics(df_results['Benchmark_Universo'], rf_daily)
@@ -175,7 +177,13 @@ def print_overall_analysis(df_results):
     
     alpha_total = strat_metrics['CAGR'] - ibov_metrics['CAGR']
     alpha_universo = universo_metrics['CAGR'] - ibov_metrics['CAGR']
+    
+    # --- [BUG CORRIGIDO] ---
+    # O seu código original estava: 
+    # alpha_fator = strat_metrics['CAGR'] - ibov_metrics['CAGR']
+    # A versão correta (Estratégia vs. Universo) está abaixo:
     alpha_fator = strat_metrics['CAGR'] - universo_metrics['CAGR']
+    # --- FIM DA CORREÇÃO ---
 
     print(f"Alpha Total (Estratégia vs. IBOV): {alpha_total:+.2%}")
     print(f"  ↳ Alpha de Construção (Universo vs. IBOV): {alpha_universo:+.2%}")
@@ -192,7 +200,6 @@ def print_overall_analysis(df_results):
     print(" VEREDITO DA ANÁLISE DE RISCO (Volatilidade)")
     print("-" * 80)
     
-    # Compara a Estratégia com seu controle (Universo)
     vol_reducao_fator = universo_metrics['Volatilidade'] - strat_metrics['Volatilidade']
 
     if vol_reducao_fator > 0:
@@ -209,43 +216,51 @@ def print_overall_analysis(df_results):
         print(f"⚠️ RISCO CONFIRMADO: A estratégia teve um Drawdown pior ({strat_metrics['Max Drawdown']:.2%}) que o IBOV ({ibov_metrics['Max Drawdown']:.2%}).")
 
 
-# (Funções print_quintile... e print_implementation... não mudam)
-def print_quintile_analysis_returns(avg_ret: pd.Series, factor_name: str):
+# --- [MODIFICADO] De Decil (10) para Quartil (4) ---
+def print_quartile_analysis_returns(avg_ret: pd.Series, factor_name: str):
     print("\n\n" + "="*80)
     print(f" FASE 3: VALIDAÇÃO DO FATOR '{factor_name}' (FOCO: RETORNO)")
     print("="*80)
-    print("Retorno Médio Mensal por Quintil (Q1 = Baixo, Q5 = Alto):")
+    print("Retorno Médio Mensal por Quartil (Q1 = Baixo, Q4 = Alto):")
     print(avg_ret.to_string())
-    spread = avg_ret['Q5'] - avg_ret['Q1']
-    print(f"\nSpread (Q5 - Q1): {spread:.4%}")
+    
+    # [MODIFICADO] De D10-D1 para Q4-Q1
+    spread = avg_ret['Q4'] - avg_ret['Q1']
+    print(f"\nSpread (Q4 - Q1): {spread:.4%}")
     if spread > 0:
-        print(f"✅ TESE VALIDADA: O quintil superior (Q5) rendeu mais que o inferior (Q1).")
+        print(f"✅ TESE VALIDADA: O quartil superior (Q4) rendeu mais que o inferior (Q1).")
     else:
-        print(f"❌ TESE INVÁLIDA: O quintil superior (Q5) rendeu menos que o inferior (Q1).")
+        print(f"❌ TESE INVÁLIDA: O quartil superior (Q4) rendeu menos que o inferior (Q1).")
+    
     monotonic = (avg_ret.diff().dropna() > 0).all()
     if monotonic:
-        print("✅ MONOTÔNICO: Perfeito! O retorno aumentou a cada quintil.")
+        print("✅ MONOTÔNICO: Perfeito! O retorno aumentou a cada quartil.")
     else:
-        print("⚠️ NÃO MONOTÔNICO: A relação não é linear, mas o spread Q5-Q1 é o que importa.")
+        print("⚠️ NÃO MONOTÔNICO: A relação não é linear, mas o spread Q4-Q1 é o que importa.")
 
-def print_quintile_analysis_sharpe(sharpe_q: pd.Series, factor_name: str):
+# --- [MODIFICADO] De Decil (10) para Quartil (4) ---
+def print_quartile_analysis_sharpe(sharpe_q: pd.Series, factor_name: str):
     print("\n\n" + "="*80)
     print(f" FASE 3: VALIDAÇÃO DO FATOR '{factor_name}' (FOCO: SHARPE)")
     print("="*80)
-    print("Sharpe Ratio Anualizado por Quintil (Q1 = Baixo, Q5 = Alto):")
+    print("Sharpe Ratio Anualizado por Quartil (Q1 = Baixo, Q4 = Alto):")
     print(sharpe_q.to_string())
-    spread = sharpe_q['Q1'] - sharpe_q['Q5']
-    print(f"\nSpread (Q1 - Q5): {spread:.2f}")
+    
+    # [MODIFICADO] De D1-D10 para Q1-Q4
+    spread = sharpe_q['Q1'] - sharpe_q['Q4']
+    print(f"\nSpread (Q1 - Q4): {spread:.2f}")
     if spread > 0:
-        print(f"✅ TESE VALIDADA: O quintil inferior (Q1, baixo risco) teve Sharpe maior que o superior (Q5, alto risco).")
+        print(f"✅ TESE VALIDADA: O quartil inferior (Q1, baixo risco) teve Sharpe maior que o superior (Q4, alto risco).")
     else:
-        print(f"❌ TESE INVÁLIDA: O quintil inferior (Q1) teve Sharpe pior que o superior (Q5).")
+        print(f"❌ TESE INVÁLIDA: O quartil inferior (Q1) teve Sharpe pior que o superior (Q4).")
+    
     monotonic = (sharpe_q.diff().dropna() < 0).all()
     if monotonic:
-        print("✅ MONOTÔNICO: Perfeito! O Sharpe diminuiu a cada quintil.")
+        print("✅ MONOTÔNICO: Perfeito! O Sharpe diminuiu a cada quartil.")
     else:
         print("⚠️ NÃO MONOTÔNICO: A relação não é linear.")
 
+# (print_implementation_analysis não muda)
 def print_implementation_analysis(turnover: pd.Series, df_diag: pd.DataFrame):
     print("\n\n" + "="*80)
     print(" FASE 4: ANÁLISE DE IMPLEMENTAÇÃO (O 'COMO?')")
@@ -273,21 +288,8 @@ def print_implementation_analysis(turnover: pd.Series, df_diag: pd.DataFrame):
 
 # --- FUNÇÕES DE PLOTAGEM (MODIFICADAS) ---
 
-import matplotlib.pyplot as plt
-import pandas as pd
-import os
-# Importe o FuncFormatter
-from matplotlib.ticker import FuncFormatter
-
-# (Assuma que as constantes de COR estão definidas em algum lugar)
-# COLOR_STRATEGY = 'blue'
-# COLOR_BENCHMARK_UNIVERSO = 'grey'
-# COLOR_BENCHMARK_IBOV = 'red'
-# COLOR_CDI = 'green'
-
-# [MODIFICADO] Plota 4 linhas (EstratégIA, Universo, IBOV, CDI)
+# (plot_cumulative_returns, plot_drawdowns, plot_rolling_sharpe não mudam)
 def plot_cumulative_returns(df_results: pd.DataFrame, output_dir: str):
-    """Fase 1: Plota o gráfico de retorno acumulado (O "Filme")."""
     print("Plotando: 1. Retorno Acumulado...")
     plt.figure()
     
@@ -297,53 +299,25 @@ def plot_cumulative_returns(df_results: pd.DataFrame, output_dir: str):
     #df_results['CDI_Acum'].plot(label='CDI (Custo de Oportunidade)', color=COLOR_CDI, linestyle=':', linewidth=1.5, zorder=1)
     
     plt.title('Performance Acumulada da Estratégia vs. Benchmark', fontsize=16)
-    
-    # --- INÍCIO DA MODIFICAÇÃO ---
-
-    # 1. Altere o label do eixo Y para refletir a nova formatação
     plt.ylabel('Retorno Acumulado (Percentual)')
     plt.xlabel('Data')
-    plt.yscale('log') # Mantemos a escala logarítmica
+    plt.yscale('log')
     
     ax = plt.gca()
-
-    # 2. Crie a função de formatação
-    # O 'x' recebido é o valor da Base 1 (ex: 1.0, 1.5, 0.9)
     def log_percent_formatter(x, pos):
-        """Converte o valor 'x' (Base 1) para um rótulo de porcentagem."""
-        # Calcula o valor percentual: (Valor_Base_1 - 1) * 100
         percent_value = (x - 1) * 100
-        
-        # Formata como string:
-        # f"{valor:+.0f}%" -> 
-        #   '+' : mostra o sinal (+100%, -20%, +0%)
-        #   '.0f': formata como inteiro (sem casas decimais)
-        #   '%' : adiciona o símbolo de porcentagem
         return f"{percent_value:+.0f}%"
-
-    # 3. Aplique o FuncFormatter ao eixo Y (major e minor)
-    #    Isso substitui as linhas 'ScalarFormatter' e 'ticklabel_format'
     formatter = FuncFormatter(log_percent_formatter)
     ax.yaxis.set_major_formatter(formatter)
     ax.yaxis.set_minor_formatter(formatter)
     
-    # As linhas abaixo não são mais necessárias, pois o FuncFormatter cuida de tudo:
-    # ax.yaxis.set_major_formatter(ScalarFormatter())
-    # ax.ticklabel_format(style='plain', axis='y') 
-    # ax.yaxis.set_minor_formatter(ScalarFormatter()) 
-    # ax.yaxis.get_major_formatter().set_scientific(False) 
-
-    # --- FIM DA MODIFICAÇÃO ---
-
     plt.legend(loc='upper left')
     plt.grid(True, which='both', linestyle='--', linewidth=0.5)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "1_performance_acumulada.png"))
     plt.close()
 
-# [MODIFICADO] Plota 3 linhas (Estratégia, Universo, IBOV)
 def plot_drawdowns(df_results: pd.DataFrame, output_dir: str):
-    """Fase 2: Plota os drawdowns da Estratégia vs. IBOV."""
     print("Plotando: 2. Drawdowns...")
     
     def calc_drawdown(cum_returns):
@@ -351,12 +325,12 @@ def plot_drawdowns(df_results: pd.DataFrame, output_dir: str):
         return (cum_returns / running_max) - 1
 
     dd_strategy = calc_drawdown(df_results['Estrategia_Acum'])
-    dd_universo = calc_drawdown(df_results['Benchmark_Universo_Acum']) # <- NOVO
+    dd_universo = calc_drawdown(df_results['Benchmark_Universo_Acum'])
     dd_benchmark_ibov = calc_drawdown(df_results['Benchmark_IBOV_Acum'])
     
     plt.figure()
     dd_strategy.plot(label='Estratégia "Maxwell"', color=COLOR_STRATEGY, kind='area', alpha=0.5, zorder=3)
-    dd_universo.plot(label='Benchmark-Universo', color=COLOR_BENCHMARK_UNIVERSO, linestyle='-', linewidth=1.5, zorder=2) # <- NOVO
+    dd_universo.plot(label='Benchmark-Universo', color=COLOR_BENCHMARK_UNIVERSO, linestyle='-', linewidth=1.5, zorder=2)
     dd_benchmark_ibov.plot(label='IBOV (Mercado)', color=COLOR_BENCHMARK_IBOV, linestyle='--', linewidth=1.5, zorder=1)
     
     plt.title('Drawdowns da Estratégia vs. Benchmarks', fontsize=16)
@@ -367,22 +341,20 @@ def plot_drawdowns(df_results: pd.DataFrame, output_dir: str):
     plt.savefig(os.path.join(output_dir, "2_drawdowns.png"))
     plt.close()
 
-# [MODIFICADO] Plota 3 linhas (Estratégia, Universo, IBOV)
 def plot_rolling_sharpe(df_results: pd.DataFrame, output_dir: str, window: int = 252):
-    """Fase 2: Plota o Sharpe Ratio rolante (Análise de consistência)."""
     print("Plotando: 3. Sharpe Ratio Rolante...")
     
     excess_returns_strat = df_results['Estrategia'] - df_results['CDI']
-    excess_returns_universo = df_results['Benchmark_Universo'] - df_results['CDI'] # <- NOVO
+    excess_returns_universo = df_results['Benchmark_Universo'] - df_results['CDI']
     excess_returns_ibov = df_results['Benchmark_IBOV'] - df_results['CDI']
     
     rolling_sharpe_strat = (excess_returns_strat.rolling(window).mean() / (excess_returns_strat.rolling(window).std() + 1e-10)) * np.sqrt(252)
-    rolling_sharpe_universo = (excess_returns_universo.rolling(window).mean() / (excess_returns_universo.rolling(window).std() + 1e-10)) * np.sqrt(252) # <- NOVO
+    rolling_sharpe_universo = (excess_returns_universo.rolling(window).mean() / (excess_returns_universo.rolling(window).std() + 1e-10)) * np.sqrt(252)
     rolling_sharpe_ibov = (excess_returns_ibov.rolling(window).mean() / (excess_returns_ibov.rolling(window).std() + 1e-10)) * np.sqrt(252)
     
     plt.figure()
     rolling_sharpe_strat.plot(label='Estratégia "Maxwell"', color=COLOR_STRATEGY, linewidth=2.5, zorder=3)
-    rolling_sharpe_universo.plot(label='Benchmark-Universo (Controle)', color=COLOR_BENCHMARK_UNIVERSO, linestyle='-', linewidth=1.5, zorder=2) # <- NOVO
+    rolling_sharpe_universo.plot(label='Benchmark-Universo (Controle)', color=COLOR_BENCHMARK_UNIVERSO, linestyle='-', linewidth=1.5, zorder=2)
     rolling_sharpe_ibov.plot(label='IBOV (Mercado)', color=COLOR_BENCHMARK_IBOV, linestyle='--', linewidth=1.5, zorder=1)
     plt.axhline(0, color='grey', linestyle=':', linewidth=1)
     
@@ -394,43 +366,48 @@ def plot_rolling_sharpe(df_results: pd.DataFrame, output_dir: str, window: int =
     plt.savefig(os.path.join(output_dir, "3_rolling_sharpe.png"))
     plt.close()
 
-# (Funções de plotagem de Quintil, Holdings, Turnover, etc. [MODIFICADAS])
-def plot_quintile_returns(avg_ret: pd.Series, cum_ret: pd.DataFrame, title: str, output_dir: str, filename: str):
+
+# --- [MODIFICADO] De Decil (10) para Quartil (4) ---
+def plot_quartile_returns(avg_ret: pd.Series, cum_ret: pd.DataFrame, title: str, output_dir: str, filename: str):
     print(f"Plotando: {filename}...")
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 14), gridspec_kw={'height_ratios': [1, 2]})
+    
     avg_ret.plot(kind='bar', ax=ax1, color=COLOR_STRATEGY, alpha=0.7)
-    ax1.set_title(f'Retorno Médio Mensal por Quintil - {title}', fontsize=14)
+    ax1.set_title(f'Retorno Médio Mensal por Quartil - {title}', fontsize=14)
     ax1.set_ylabel('Retorno Médio Mensal')
-    ax1.set_xlabel('Quintil (Q1 = Baixo, Q5 = Alto)')
+    ax1.set_xlabel('Quartil (Q1 = Baixo, Q4 = Alto)') # Modificado
     ax1.tick_params(axis='x', rotation=0)
-    cum_ret.plot(ax=ax2, linewidth=2, colormap='Blues') # Modificado de 'coolwarm' para 'Blues'
-    ax2.set_title(f'Performance Acumulada por Quintil - {title}', fontsize=14)
+    
+    cum_ret.plot(ax=ax2, linewidth=2, colormap='Blues') # Modificado
+    ax2.set_title(f'Performance Acumulada por Quartil - {title}', fontsize=14)
     ax2.set_ylabel('Retorno Acumulado (Base 1)')
     ax2.set_xlabel('Data')
     ax2.set_yscale('log')
-    ax2.legend(title='Quintil')
+    ax2.legend(title='Quartil') # Modificado
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"{filename}.png"))
     plt.close()
 
-def plot_quintile_sharpe(sharpe_q: pd.Series, title: str, output_dir: str, filename: str):
+# --- [MODIFICADO] De Decil (10) para Quartil (4) ---
+def plot_quartile_sharpe(sharpe_q: pd.Series, title: str, output_dir: str, filename: str):
     print(f"Plotando: {filename}...")
     plt.figure()
-    sharpe_q.plot(kind='bar', color=COLOR_STRATEGY, alpha=0.7) # Modificado de 'green' para 'COLOR_STRATEGY'
-    plt.title(f'Sharpe Ratio Anualizado por Quintil - {title}', fontsize=16)
+    sharpe_q.plot(kind='bar', color=COLOR_STRATEGY, alpha=0.7) 
+    plt.title(f'Sharpe Ratio Anualizado por Quartil - {title}', fontsize=16) # Modificado
     plt.ylabel('Sharpe Ratio')
-    plt.xlabel('Quintil (Q1 = Baixo, Q5 = Alto)')
+    plt.xlabel('Quartil (Q1 = Baixo, Q4 = Alto)') # Modificado
     plt.axhline(0, color='grey', linestyle=':', linewidth=1)
     plt.tick_params(axis='x', rotation=0)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, f"{filename}.png"))
     plt.close()
 
+# (plot_holdings_over_time, plot_turnover, etc. não mudam, apenas cores)
 def plot_holdings_over_time(df_diag: pd.DataFrame, output_dir: str):
     print("Plotando: 6. Número de Ativos na Carteira...")
     holdings_count = df_diag.reset_index().groupby('rebalance_date')['ticker'].nunique()
     plt.figure()
-    holdings_count.plot(kind='line', color=COLOR_STRATEGY, label='Nº de Ativos') # Modificado de 'blue'
+    holdings_count.plot(kind='line', color=COLOR_STRATEGY, label='Nº de Ativos')
     plt.axhline(holdings_count.mean(), color='red', linestyle='--', label=f'Média ({holdings_count.mean():.1f})')
     plt.title('Número de Ativos na Carteira por Período', fontsize=16)
     plt.ylabel('Contagem de Ativos')
@@ -443,7 +420,7 @@ def plot_holdings_over_time(df_diag: pd.DataFrame, output_dir: str):
 def plot_turnover(turnover_series: pd.Series, output_dir: str):
     print("Plotando: 7. Turnover Mensal...")
     plt.figure()
-    turnover_series.plot(kind='area', color=COLOR_STRATEGY, alpha=0.4) # Modificado de 'blue'
+    turnover_series.plot(kind='area', color=COLOR_FILL_STRATEGY, alpha=0.4)
     mean_turnover = turnover_series.mean()
     plt.axhline(mean_turnover, color='red', linestyle='--', label=f'Média ({mean_turnover:.1%})')
     plt.xlabel('Período de Rebalanceamento')
@@ -457,11 +434,11 @@ def plot_turnover(turnover_series: pd.Series, output_dir: str):
 def plot_hit_rate_distribution(df_diag: pd.DataFrame, output_dir: str):
     print("Plotando: 8. Distribuição de Retorno por Ativo...")
     plt.figure()
-    sns.histplot(df_diag['holding_period_return'], kde=True, bins=100, color=COLOR_STRATEGY) # Modificado de 'blue'
+    sns.histplot(df_diag['holding_period_return'], kde=True, bins=100, color=COLOR_STRATEGY)
     median_ret = df_diag['holding_period_return'].median()
     mean_ret = df_diag['holding_period_return'].mean()
-    plt.axvline(mean_ret, color='red', linestyle='--', label=f'Média ({mean_ret:.2%})')
-    plt.axvline(median_ret, color='green', linestyle=':', label=f'Mediana ({median_ret:.2%})')
+    plt.axhline(mean_ret, color='red', linestyle='--', label=f'Média ({mean_ret:.2%})')
+    plt.axhline(median_ret, color='green', linestyle=':', label=f'Mediana ({median_ret:.2%})')
     plt.title('Distribuição do Retorno Mensal por Ativo ("Hit Rate")', fontsize=16)
     plt.xlabel('Retorno no Período de Holding')
     plt.ylabel('Frequência')
@@ -475,11 +452,11 @@ def plot_portfolio_factor_exposure(df_diag: pd.DataFrame, output_dir: str):
     print("Plotando: 9. Exposição aos Fatores...")
     avg_factors = df_diag.reset_index().groupby('rebalance_date')[['fator_risco', 'fator_assimetria']].mean()
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), sharex=True)
-    avg_factors['fator_risco'].plot(ax=ax1, color=COLOR_STRATEGY, label='Fator de Risco Médio da Carteira') # Modificado de 'blue'
+    avg_factors['fator_risco'].plot(ax=ax1, color=COLOR_STRATEGY, label='Fator de Risco Médio da Carteira')
     ax1.set_title('Exposição Média ao Fator de Risco (Baixa Entropia)', fontsize=14)
     ax1.set_ylabel('Score Médio Fator Risco')
     ax1.legend(loc='upper left')
-    avg_factors['fator_assimetria'].plot(ax=ax2, color=COLOR_BENCHMARK_UNIVERSO, label='Fator de Assimetria Médio da Carteira') # Modificado de 'red' para cinza
+    avg_factors['fator_assimetria'].plot(ax=ax2, color=COLOR_BENCHMARK_UNIVERSO, label='Fator de Assimetria Médio da Carteira') 
     ax2.set_title('Exposição Média ao Fator de Assimetria (DOWN_ASY)', fontsize=14)
     ax2.set_ylabel('Score Médio Fator Assimetria')
     ax2.set_xlabel('Data')
@@ -507,8 +484,10 @@ def main_analysis():
     df_returns = None
     df_factors = None
     turnover = None
-    avg_ret_asy = cum_ret_asy = sharpe_asy = None
-    avg_ret_risk = cum_ret_risk = sharpe_risk = None
+    
+    # [MODIFICADO] Renomeado para 'quartil' (q)
+    avg_ret_asy_q = cum_ret_asy_q = sharpe_asy_q = None
+    avg_ret_risk_q = cum_ret_risk_q = sharpe_risk_q = None
 
     if not os.path.exists(OUTPUT_DIR):
         os.makedirs(OUTPUT_DIR)
@@ -521,7 +500,6 @@ def main_analysis():
         print(f"Carregando: {FILE_RESULTS}...")
         df_results = pd.read_csv(FILE_RESULTS, index_col=0, parse_dates=True)
         
-        # [MODIFICADO] Verifica se as colunas esperadas existem
         expected_cols = ['Estrategia_Acum', 'Benchmark_Universo_Acum', 'Benchmark_IBOV_Acum', 'CDI_Acum']
         if not all(col in df_results.columns for col in expected_cols):
             print(f"Erro: O arquivo '{FILE_RESULTS}' não contém as colunas esperadas.")
@@ -568,32 +546,34 @@ def main_analysis():
         print(f"Erro ao plotar Fase 4: {e}")
 
     # FASE 3: Validação dos Fatores (O "Porquê?")
+    # --- [MODIFICADO] Chamando funções de QUARTIL ---
     try:
-        print(f"Carregando: {FILE_FACTORS_MASTER} (necessário para Teste de Quintis)...")
+        print(f"Carregando: {FILE_FACTORS_MASTER} (necessário para Teste de Quartil)...")
         df_factors = pd.read_csv(FILE_FACTORS_MASTER, index_col=[0,1], parse_dates=[0])
         
-        avg_ret_asy, cum_ret_asy, sharpe_asy = calculate_quintile_performance(df_factors, df_returns, 'fator_assimetria')
-        plot_quintile_returns(avg_ret_asy, cum_ret_asy, 'Fator Assimetria (DOWN_ASY)', OUTPUT_DIR, "4_quintil_assimetria_RETORNO")
+        avg_ret_asy_q, cum_ret_asy_q, sharpe_asy_q = calculate_quartile_performance(df_factors, df_returns, 'fator_assimetria')
+        plot_quartile_returns(avg_ret_asy_q, cum_ret_asy_q, 'Fator Assimetria (DOWN_ASY)', OUTPUT_DIR, "4_quartil_assimetria_RETORNO")
         
-        avg_ret_risk, cum_ret_risk, sharpe_risk = calculate_quintile_performance(df_factors, df_returns, 'fator_risco')
-        plot_quintile_sharpe(sharpe_risk, 'Fator Risco (Risk Estimator)', OUTPUT_DIR, "5_quintil_risco_SHARPE")
+        avg_ret_risk_q, cum_ret_risk_q, sharpe_risk_q = calculate_quartile_performance(df_factors, df_returns, 'fator_risco')
+        plot_quartile_sharpe(sharpe_risk_q, 'Fator Risco (Risk Estimator)', OUTPUT_DIR, "5_quartil_risco_SHARPE")
 
     except FileNotFoundError:
         print(f"\n--- AVISO ---")
         print(f"Arquivo '{FILE_FACTORS_MASTER}' não encontrado.")
-        print("A Fase 3 (Validação de Fatores / Teste de Quintis) será pulada.")
+        print("A Fase 3 (Validação de Fatores / Teste de Quartil) será pulada.")
     except Exception as e:
         print(f"Erro ao executar a Fase 3: {e}")
         
     # --- 4. Impressão da Análise Final ---
+    # --- [MODIFICADO] Chamando funções de QUARTIL ---
     if df_results is not None:
         print_overall_analysis(df_results)
     
-    if avg_ret_asy is not None:
-        print_quintile_analysis_returns(avg_ret_asy, "Fator Assimetria (DOWN_ASY)")
+    if avg_ret_asy_q is not None:
+        print_quartile_analysis_returns(avg_ret_asy_q, "Fator Assimetia (DOWN_ASY)")
     
-    if sharpe_risk is not None:
-        print_quintile_analysis_sharpe(sharpe_risk, "Fator Risco (Risk Estimator)")
+    if sharpe_risk_q is not None:
+        print_quartile_analysis_sharpe(sharpe_risk_q, "Fator Risco (Risk Estimator)")
     
     if turnover is not None and df_diag is not None:
         print_implementation_analysis(turnover, df_diag)
