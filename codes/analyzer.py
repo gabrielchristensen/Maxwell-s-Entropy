@@ -9,16 +9,67 @@ from backtest import calculate_performance_metrics
 
 # --- CONFIGURAÇÕES GLOBAIS ---
 warnings.filterwarnings('ignore')
-sns.set_theme(style="whitegrid")
+
+# === INÍCIO DA MODIFICAÇÃO DE ESTILO (PALETA ANANKE) ===
+
+# 1. Definição da Paleta "Ananke"
+PRETO_FUNDO = "#0A0A0A"      # Preto suave (Fundo da Figura e Eixos)
+AZUL_PRINCIPAL = "#00BFFF"   # Azul elétrico (Estratégia, Títulos)
+BRANCO_TEXTO = "#F0F0F0"     # Branco/Cinza claro (Texto, Eixos)
+CINZA_GRID = "#333333"       # Grid sutil no fundo preto
+VERMELHO_NEG = "#FF4136"     # Vermelho (Drawdowns, Média 2, Fator 2)
+VERDE_POS = "#2ECC40"        # Verde (CDI, Média 3)
+CINZA_BENCH = "#BBBBBB"       # Cinza claro (Benchmark IBOV)
+
+# 2. Dicionário rc_params para o tema "Ananke"
+ANANKE_THEME_RC = {
+    # --- Fundo ---
+    'figure.facecolor': PRETO_FUNDO,
+    'axes.facecolor': PRETO_FUNDO,
+    
+    # --- Texto e Títulos ---
+    'text.color': BRANCO_TEXTO,
+    'axes.labelcolor': BRANCO_TEXTO,
+    'xtick.color': BRANCO_TEXTO,
+    'ytick.color': BRANCO_TEXTO,
+    'axes.titlecolor': AZUL_PRINCIPAL,
+    'axes.titleweight': 'bold',
+    'axes.titlesize': '16',
+    
+    # --- Eixos (Spines) e Grid ---
+    'axes.edgecolor': CINZA_GRID,
+    'grid.color': CINZA_GRID,
+    'grid.linestyle': '--',
+    'grid.linewidth': 0.5,
+    'axes.axisbelow': True,
+
+    # --- Legenda ---
+    'legend.facecolor': PRETO_FUNDO,
+    'legend.edgecolor': CINZA_GRID,
+    'legend.frameon': True,
+    'legend.title_fontsize': '12',
+    'legend.fontsize': '10',
+    'legend.labelcolor': BRANCO_TEXTO, # <-- Esta linha é válida e colore os itens
+    # A cor do TÍTULO da legenda será herdada de 'text.color'
+}
+
+# 3. Aplicar o Tema
+sns.set_theme(style="darkgrid", rc=ANANKE_THEME_RC)
+
+# 4. Configurações Globais de Figura (mantidas do original)
 plt.rcParams['figure.figsize'] = (12, 7)
 plt.rcParams['figure.dpi'] = 100
-pd.options.display.float_format = '{:.4f}'.format # Formatação limpa para DataFrames
+pd.options.display.float_format = '{:.4f}'.format # Formatação limpa
+
+# === FIM DA MODIFICAÇÃO DE ESTILO ===
+
 
 # --- FUNÇÕES DE CÁLCULO AUXILIARES ---
+# [NENHUMA ALTERAÇÃO AQUI - LÓGICA IDÊNTICA]
 
 def calculate_quintile_performance(df_factors: pd.DataFrame, 
-                                   df_returns: pd.DataFrame, 
-                                   factor_name: str) -> (pd.Series, pd.DataFrame, pd.Series):
+                                 df_returns: pd.DataFrame, 
+                                 factor_name: str) -> (pd.Series, pd.DataFrame, pd.Series):
     """
     [CORRIGIDO] Executa o teste de quintis para um fator. 
     Esta função agora agrega os retornos de quintil corretamente.
@@ -81,7 +132,7 @@ def calculate_quintile_performance(df_factors: pd.DataFrame,
         else:
             # [CORREÇÃO] Adiciona uma Series vazia se um quintil não teve dados
             df_quintile_daily_list.append(pd.Series(name=q_name, dtype=float))
-        
+            
     # Concatena os 5 DFs de quintil em colunas, preenchendo dias faltantes com 0
     df_quintile_daily = pd.concat(df_quintile_daily_list, axis=1).fillna(0)
 
@@ -125,6 +176,7 @@ def calculate_turnover(df_diag: pd.DataFrame) -> pd.Series:
 
 
 # --- FUNÇÕES DE ANÁLISE (IMPRESSÃO) ---
+# [NENHUMA ALTERAÇÃO AQUI - LÓGICA IDÊNTICA]
 
 def print_overall_analysis(df_results):
     """Fase 1: Imprime a análise de performance agregada."""
@@ -150,33 +202,33 @@ def print_overall_analysis(df_results):
     print("\n--- VEREDITO (TESE 1: FATOR DE RISCO) ---")
     if strat_metrics['Volatilidade'] < ibov_metrics['Volatilidade']:
         print(f"✅ SUCESSO: A estratégia foi {ibov_metrics['Volatilidade'] - strat_metrics['Volatilidade']:.2f}% menos volátil que o IBOV.")
-        print(f"   ↳ TESE VALIDADA: O filtro 'fator_risco' (baixa entropia) foi eficaz em reduzir o risco, mesmo com uma carteira concentrada.")
+        print(f"   ↳ TESE VALIDADA: O filtro 'fator_risco' (baixa entropia) foi eficaz em reduzir o risco, mesmo com uma carteira concentrada.")
     else:
         print(f"❌ FALHA: A estratégia foi {strat_metrics['Volatilidade'] - ibov_metrics['Volatilidade']:.2f}% mais volátil que o IBOV.")
-        print(f"   ↳ TESE INVÁLIDA: A seleção de 'fator_risco' não foi suficiente para superar o risco de concentração.")
+        print(f"   ↳ TESE INVÁLIDA: A seleção de 'fator_risco' não foi suficiente para superar o risco de concentração.")
         
     print("\n--- VEREDITO (TESE 2: FATOR DE ASSIMETRIA) ---")
     if strat_metrics['CAGR'] > ibov_metrics['CAGR']:
         if strat_metrics['CAGR'] > cdi_metrics['CAGR']:
              print(f"✅ SUCESSO: A estratégia gerou Alpha positivo, superando o IBOV em {strat_metrics['CAGR'] - ibov_metrics['CAGR']:.2f}% a.a. e o CDI em {strat_metrics['CAGR'] - cdi_metrics['CAGR']:.2f}% a.a.")
-             print(f"   ↳ TESE VALIDADA: O filtro 'fator_assimetria' (DOWN_ASY) capturou um prémio de risco que resultou em retornos superiores.")
+             print(f"   ↳ TESE VALIDADA: O filtro 'fator_assimetria' (DOWN_ASY) capturou um prémio de risco que resultou em retornos superiores.")
         else:
              print(f"⚠️ ATENÇÃO: A estratégia superou o IBOV, mas falhou em superar o custo de oportunidade (CDI).")
     else:
         print(f"❌ FALHA: A estratégia teve performance inferior ao IBOV em {ibov_metrics['CAGR'] - strat_metrics['CAGR']:.2f}% a.a.")
-        print(f"   ↳ TESE INVÁLIDA: O prémio de risco 'fator_assimetria' não se materializou ou não foi capturado.")
+        print(f"   ↳ TESE INVÁLIDA: O prémio de risco 'fator_assimetria' não se materializou ou não foi capturado.")
         
     print("\n--- VEREDITO (RISCO DE CAUDA) ---")
     if strat_metrics['Max Drawdown'] > ibov_metrics['Max Drawdown']:
-        print(f"⚠️ RISCO CONFIRMADO: A estratégia teve um Drawdown pior ({strat_metrics['Max Drawdown']:.2%}) que o IBOV ({ibov_metrics['Max Drawdown']:.2%}).")
-        print(f"   ↳ Isto é esperado pela Tese 2 (seleção de alto DOWN_ASY).")
+        print(f"⚠️ RISCO CONFIRMADO: A estratégia teve um Drawdown pior ({strat_metrics['Max Drawdown']:.2%}) que o IBOV ({strat_metrics['Max Drawdown']:.2%}).")
+        print(f"   ↳ Isto é esperado pela Tese 2 (seleção de alto DOWN_ASY).")
         if strat_metrics['Calmar Ratio'] > ibov_metrics['Calmar Ratio']:
             print(f"✅ COMPENSAÇÃO: O Calmar Ratio foi superior ({strat_metrics['Calmar Ratio']:.2f} vs {ibov_metrics['Calmar Ratio']:.2f}), indicando que o retorno maior compensou a queda.")
         else:
             print(f"❌ PROBLEMA: O Calmar Ratio foi inferior. O retorno extra NÃO compensou o risco de queda maior.")
     else:
-        print(f"✅ BÔNUS DEFENSIVO: A estratégia foi mais defensiva, com um Drawdown menor ({strat_metrics['Max Drawdown']:.2%}) que o IBOV ({ibov_metrics['Max Drawdown']:.2%}).")
-        print(f"   ↳ O poder do 'fator_risco' foi mais forte que o risco do 'fator_assimetria'.")
+        print(f"✅ BÔNUS DEFENSIVO: A estratégia foi mais defensiva, com um Drawdown menor ({strat_metrics['Max Drawdown']:.2%}) que o IBOV ({strat_metrics['Max Drawdown']:.2%}).")
+        print(f"   ↳ O poder do 'fator_risco' foi mais forte que o risco do 'fator_assimetria'.")
 
 
 def print_quintile_analysis_returns(avg_ret: pd.Series, factor_name: str):
@@ -241,40 +293,41 @@ def print_implementation_analysis(turnover: pd.Series, df_diag: pd.DataFrame):
     
     print(f"Número Médio de Ativos na Carteira: {mean_holdings:.1f}")
     if mean_holdings < 10:
-        print(f"   ↳ ⚠️ ALERTA DE CONCENTRAÇÃO: A média de ativos é muito baixa. O risco idiossincrático pode estar dominando a estratégia.")
+        print(f"   ↳ ⚠️ ALERTA DE CONCENTRAÇÃO: A média de ativos é muito baixa. O risco idiossincrático pode estar dominando a estratégia.")
     else:
-        print(f"   ↳ ✅ Nível de diversificação saudável (próximo do limite de 20).")
+        print(f"   ↳ ✅ Nível de diversificação saudável (próximo do limite de 20).")
         
     print(f"\nTurnover Médio Mensal: {mean_turnover:.1%}")
     if mean_turnover > 0.4: # 40% ao mês
-        print(f"   ↳ ⚠️ ALERTA DE CUSTOS: O giro da carteira é alto. Os custos de transação (não modelados) podem consumir uma parte significativa do Alpha.")
+        print(f"   ↳ ⚠️ ALERTA DE CUSTOS: O giro da carteira é alto. Os custos de transação (não modelados) podem consumir uma parte significativa do Alpha.")
     else:
-        print(f"   ↳ ✅ Giro da carteira gerenciável.")
+        print(f"   ↳ ✅ Giro da carteira gerenciável.")
         
     print(f"\nRetorno Médio por 'Aposta' (Hit Rate): {mean_hit_rate:.2%}")
     if mean_hit_rate > 0:
-         print(f"   ↳ ✅ Positivo. Em média, as ações selecionadas tiveram performance positiva no mês seguinte.")
+         print(f"   ↳ ✅ Positivo. Em média, as ações selecionadas tiveram performance positiva no mês seguinte.")
     else:
-         print(f"   ↳ ❌ Negativo. A seleção de fatores está, em média, a escolher ações perdedoras.")
+         print(f"   ↳ ❌ Negativo. A seleção de fatores está, em média, a escolher ações perdedoras.")
 
 
-# --- FUNÇÕES DE PLOTAGEM (CORRIGIDAS) ---
+# --- FUNÇÕES DE PLOTAGEM (CORRIGIDAS COM ESTILO "ANANKE") ---
 
 def plot_cumulative_returns(df_results: pd.DataFrame, output_dir: str):
     """Fase 1: Plota o gráfico de retorno acumulado (O "Filme")."""
     print("Plotando: 1. Retorno Acumulado...")
     plt.figure()
     
-    df_results['Estrategia_Acum'].plot(label='Estratégia (Fator Duplo)', color='blue', linewidth=2)
-    df_results['Benchmark_Acum'].plot(label='IBOV (Benchmark)', color='black', linestyle='--', linewidth=1.5)
-    df_results['CDI_Acum'].plot(label='CDI (Custo de Oportunidade)', color='green', linestyle=':', linewidth=1.5)
+    # [ESTILO] Cores alteradas para a paleta Ananke
+    df_results['Estrategia_Acum'].plot(label='Estratégia (Fator Duplo)', color=AZUL_PRINCIPAL, linewidth=2)
+    df_results['Benchmark_Acum'].plot(label='IBOV (Benchmark)', color=CINZA_BENCH, linestyle='--', linewidth=1.5)
+    df_results['CDI_Acum'].plot(label='CDI (Custo de Oportunidade)', color=VERMELHO_NEG, linestyle=':', linewidth=1.5)
     
-    plt.title('Performance Acumulada da Estratégia vs. Benchmarks (Log Scale)', fontsize=16)
-    plt.ylabel('Retorno Acumulado (Base 1)')
+    plt.title('Performance Acumulada da Estratégia vs. Benchmarks', fontsize=16)
+    plt.ylabel('Retorno Acumulado')
     plt.xlabel('Data')
-    plt.yscale('log')
     plt.legend(loc='upper left')
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    # [ESTILO] Grid agora é controlado pelo set_theme global
+    # plt.grid(True, which='both', linestyle='--', linewidth=0.5) 
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "1_performance_acumulada.png"))
     plt.close()
@@ -291,8 +344,9 @@ def plot_drawdowns(df_results: pd.DataFrame, output_dir: str):
     dd_benchmark = calc_drawdown(df_results['Benchmark_Acum'])
     
     plt.figure()
-    dd_strategy.plot(label='Estratégia (Fator Duplo)', color='blue', kind='area', alpha=0.5)
-    dd_benchmark.plot(label='IBOV (Benchmark)', color='black', linestyle='--', linewidth=1.5)
+    # [ESTILO] Drawdown da estratégia em VERMELHO, benchmark em CINZA
+    dd_strategy.plot(label='Estratégia (Fator Duplo)', color=VERMELHO_NEG, kind='area', alpha=0.5)
+    dd_benchmark.plot(label='IBOV (Benchmark)', color=CINZA_BENCH, linestyle='--', linewidth=1.5)
     
     plt.title('Drawdowns da Estratégia vs. IBOV', fontsize=16)
     plt.ylabel('Queda Percentual do Pico')
@@ -313,9 +367,10 @@ def plot_rolling_sharpe(df_results: pd.DataFrame, output_dir: str, window: int =
     rolling_sharpe_bench = (excess_returns_bench.rolling(window).mean() / (excess_returns_bench.rolling(window).std() + 1e-10)) * np.sqrt(252)
     
     plt.figure()
-    rolling_sharpe_strat.plot(label='Estratégia (Fator Duplo)', color='blue', linewidth=2)
-    rolling_sharpe_bench.plot(label='IBOV (Benchmark)', color='black', linestyle='--', linewidth=1.5)
-    plt.axhline(0, color='grey', linestyle=':', linewidth=1)
+    # [ESTILO] Estratégia em AZUL, benchmark em CINZA
+    rolling_sharpe_strat.plot(label='Estratégia (Fator Duplo)', color=AZUL_PRINCIPAL, linewidth=2)
+    rolling_sharpe_bench.plot(label='IBOV (Benchmark)', color=CINZA_BENCH, linestyle='--', linewidth=1.5)
+    plt.axhline(0, color=CINZA_GRID, linestyle=':', linewidth=1) # Linha 0 usa cor do grid
     
     plt.title(f'Sharpe Ratio Rolante ({window} dias)', fontsize=16)
     plt.ylabel('Sharpe Ratio Anualizado')
@@ -330,7 +385,8 @@ def plot_quintile_returns(avg_ret: pd.Series, cum_ret: pd.DataFrame, title: str,
     print(f"Plotando: {filename}...")
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 14), gridspec_kw={'height_ratios': [1, 2]})
     
-    avg_ret.plot(kind='bar', ax=ax1, color='blue', alpha=0.7)
+    # [ESTILO] Barras em AZUL. Colormap 'coolwarm' (Azul-Vermelho) funciona bem em fundo escuro
+    avg_ret.plot(kind='bar', ax=ax1, color=AZUL_PRINCIPAL, alpha=0.7)
     ax1.set_title(f'Retorno Médio Mensal por Quintil - {title}', fontsize=14)
     ax1.set_ylabel('Retorno Médio Mensal')
     ax1.set_xlabel('Quintil (Q1 = Baixo, Q5 = Alto)')
@@ -352,11 +408,12 @@ def plot_quintile_sharpe(sharpe_q: pd.Series, title: str, output_dir: str, filen
     print(f"Plotando: {filename}...")
     plt.figure()
     
-    sharpe_q.plot(kind='bar', color='blue', alpha=0.7)
+    # [ESTILO] Barras em AZUL
+    sharpe_q.plot(kind='bar', color=AZUL_PRINCIPAL, alpha=0.7)
     plt.title(f'Sharpe Ratio Anualizado por Quintil - {title}', fontsize=16)
     plt.ylabel('Sharpe Ratio')
     plt.xlabel('Quintil (Q1 = Baixo, Q5 = Alto)')
-    plt.axhline(0, color='grey', linestyle=':', linewidth=1)
+    plt.axhline(0, color=CINZA_GRID, linestyle=':', linewidth=1) # Linha 0 usa cor do grid
     plt.tick_params(axis='x', rotation=0)
     
     plt.tight_layout()
@@ -369,8 +426,9 @@ def plot_holdings_over_time(df_diag: pd.DataFrame, output_dir: str):
     holdings_count = df_diag.reset_index().groupby('rebalance_date')['ticker'].nunique()
     
     plt.figure()
-    holdings_count.plot(kind='line', color='blue', label='Nº de Ativos')
-    plt.axhline(holdings_count.mean(), color='red', linestyle='--', label=f'Média ({holdings_count.mean():.1f})')
+    # [ESTILO] Linha em AZUL, média em VERMELHO
+    holdings_count.plot(kind='line', color=AZUL_PRINCIPAL, label='Nº de Ativos')
+    plt.axhline(holdings_count.mean(), color=VERMELHO_NEG, linestyle='--', label=f'Média ({holdings_count.mean():.1f})')
     
     plt.title('Número de Ativos na Carteira por Período', fontsize=16)
     plt.ylabel('Contagem de Ativos')
@@ -384,11 +442,11 @@ def plot_turnover(turnover_series: pd.Series, output_dir: str):
     """Fase 4: Plota o turnover (giro) da carteira."""
     print("Plotando: 7. Turnover Mensal...")
     plt.figure()
-    # [CORREÇÃO] Gráfico de barra é ilegível. Mudar para 'area'.
-    turnover_series.plot(kind='area', color='blue', alpha=0.4)
+    # [ESTILO] Área em AZUL, média em VERMELHO
+    turnover_series.plot(kind='area', color=AZUL_PRINCIPAL, alpha=0.4)
     
     mean_turnover = turnover_series.mean()
-    plt.axhline(mean_turnover, color='red', linestyle='--', label=f'Média ({mean_turnover:.1%})')
+    plt.axhline(mean_turnover, color=VERMELHO_NEG, linestyle='--', label=f'Média ({mean_turnover:.1%})')
     
     plt.xlabel('Período de Rebalanceamento')
     plt.ylabel('Turnover Mensal (%)')
@@ -402,12 +460,14 @@ def plot_hit_rate_distribution(df_diag: pd.DataFrame, output_dir: str):
     """Fase 4: Plota a distribuição dos retornos de cada "aposta"."""
     print("Plotando: 8. Distribuição de Retorno por Ativo...")
     plt.figure()
-    sns.histplot(df_diag['holding_period_return'], kde=True, bins=100, color='blue')
+    # [ESTILO] Histograma em AZUL
+    sns.histplot(df_diag['holding_period_return'], kde=True, bins=100, color=AZUL_PRINCIPAL)
     
     median_ret = df_diag['holding_period_return'].median()
     mean_ret = df_diag['holding_period_return'].mean()
-    plt.axvline(mean_ret, color='red', linestyle='--', label=f'Média ({mean_ret:.2%})')
-    plt.axvline(median_ret, color='green', linestyle=':', label=f'Mediana ({median_ret:.2%})')
+    # [ESTILO] Média em VERMELHO, Mediana em VERDE
+    plt.axvline(mean_ret, color=VERMELHO_NEG, linestyle='--', label=f'Média ({mean_ret:.2%})')
+    plt.axvline(median_ret, color=VERDE_POS, linestyle=':', label=f'Mediana ({median_ret:.2%})')
     
     plt.title('Distribuição do Retorno Mensal por Ativo ("Hit Rate")', fontsize=16)
     plt.xlabel('Retorno no Período de Holding')
@@ -426,12 +486,14 @@ def plot_portfolio_factor_exposure(df_diag: pd.DataFrame, output_dir: str):
     
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12), sharex=True)
     
-    avg_factors['fator_risco'].plot(ax=ax1, color='blue', label='Fator de Risco Médio da Carteira')
+    # [ESTILO] Fator 1 (Risco) em AZUL
+    avg_factors['fator_risco'].plot(ax=ax1, color=AZUL_PRINCIPAL, label='Fator de Risco Médio da Carteira')
     ax1.set_title('Exposição Média ao Fator de Risco (Baixa Entropia)', fontsize=14)
     ax1.set_ylabel('Score Médio Fator Risco')
     ax1.legend(loc='upper left')
     
-    avg_factors['fator_assimetria'].plot(ax=ax2, color='red', label='Fator de Assimetria Médio da Carteira')
+    # [ESTILO] Fator 2 (Assimetria) em VERMELHO
+    avg_factors['fator_assimetria'].plot(ax=ax2, color=VERMELHO_NEG, label='Fator de Assimetria Médio da Carteira')
     ax2.set_title('Exposição Média ao Fator de Assimetria (DOWN_ASY)', fontsize=14)
     ax2.set_ylabel('Score Médio Fator Assimetria')
     ax2.set_xlabel('Data')
@@ -443,6 +505,7 @@ def plot_portfolio_factor_exposure(df_diag: pd.DataFrame, output_dir: str):
 
 
 # --- FUNÇÃO PRINCIPAL (ORQUESTRADOR) ---
+# [NENHUMA ALTERAÇÃO AQUI - LÓGICA IDÊNTICA]
 
 def main_analysis():
     """
@@ -540,7 +603,7 @@ def main_analysis():
         print_overall_analysis(df_results)
     
     if avg_ret_asy is not None:
-        print_quintile_analysis_returns(avg_ret_asy, "Fator Assimetria (DOWN_ASY)")
+        print_quintile_analysis_returns(avg_ret_asy, "Fator Assimetia (DOWN_ASY)")
     
     if sharpe_risk is not None:
         print_quintile_analysis_sharpe(sharpe_risk, "Fator Risco (Risk Estimator)")

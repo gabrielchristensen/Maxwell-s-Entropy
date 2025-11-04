@@ -230,8 +230,8 @@ def main_run_backtest():
     config = {
         'start_date': '2011-01-01', 
         'end_date': '2024-12-31',   
-        'asymmetry_percentile': 0.75,
-        'risk_percentile': 0.5,
+        'asymmetry_percentile': 0.9,
+        'risk_percentile': 0.1,
         'max_assets': 20,
         'allocation_method': 'equal_weight',
         'benchmark_ticker': '^BVSP',
